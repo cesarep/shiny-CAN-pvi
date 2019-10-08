@@ -2,8 +2,29 @@ library(shiny)
 library(xtable)
 
 shinyServer(function(input, output, session) {
-   #valor inicial de y'
-   dydx <- function(x, y) {x + y^2} 
+   #define valores reativos
+   rv <- reactiveValues(tabela=data.frame(), 
+                        dydx = function(x, y) x + y^2,
+                        plot=list(), 
+                        intervalo = list(x=c(-5,5), y=c(-5,5)),
+                        resultado = list(),
+                        cabecario = ""
+                        )
+   
+   #define funções
+   fTest <- function(x, y) {}
+   observeEvent(input$dydx, {
+      #preenche * entre numero e x ou função
+      if(grepl("(\\d)(\\w|\\()", input$dydx))
+         updateTextInput(session, 'dydx', value = gsub("(\\d)(\\w|\\()", "\\1*\\2", input$dydx))
+      
+      try({
+         body(fTest) <- parse(text = paste0(input$dydx))
+         if( !is.primitive(fTest(1, 1)) )
+            body(rv$dydx) <- parse(text = paste0(input$dydx))
+      }, silent = T)
+   })
+   
    
    #atualiza ponto inicial e final
    observeEvent(input$plot_click, {
@@ -17,13 +38,51 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session, 'xf', value = round(xf, 2))
    })
    
-   #define tabela como um valor reativo
-   rv <- reactiveValues(tabela=0) 
    
-   #atualiza valor da tabela
-   observeEvent({input$x0; input$y0; input$xf; input$metodo; input$N}, { 
+   #cuida do zoom do plot
+   observeEvent(input$zoom, {
+      dir = input$zoom$dir #direção do scroll do mouse
+      usr = rv$plot$par$usr #coordenadas dos extremos da plotagem em unidades do plot
+      pin = rv$plot$par$pin #tamanho da plotagem em pol
+      mai = rv$plot$par$mai #tamanho das margens em pol
+      din = rv$plot$par$din #tamanho da plotagem+margens em pol
+      dev = rv$plot$dev #tamanho da plotagem+margens em px
+      einpx = din/dev #escala pol/px
+      #ponto clicado em pol com origem na plotagem
+      ptoin = list(x=input$zoom$x*einpx[1]-mai[2], y=input$zoom$y*einpx[2]-mai[3])
+      
+      #verifica se mouse está nos eixos
+      if(ptoin$x<0 && ptoin$y<din[2]-mai[1]) #mouse no eixo y
+         k=list(x=0,y=.25)
+      else if(ptoin$x>0 && ptoin$y>din[2]-mai[1]) #mouse no eixo x
+         k=list(x=.25,y=0)
+      else #mouse na plotagem
+         k=list(x=.25,y=.25)
+      
+      dx=usr[2]-usr[1] #intervalo x em unidades
+      dy=usr[4]-usr[3] #intervalo y em unidades
+      ex=dx/pin[1] #escala x em unidades/pol
+      ey=dy/pin[2] #escala y em unidades/pol
+      
+      pto = list(x=usr[1]+ptoin$x*ex, y=usr[4]-ptoin$y*ey)
+      
+      int = rv$intervalo #intervalo de plotagem em unidades
+      Dx = pto$x-int$x #distancia entre pto clicado e extremos do intervalo
+      Dy = pto$y-int$y
+      
+      #afasta ou aproxima (dir +/-1) num fator k
+      int$x = int$x - Dx*k$x*dir
+      int$y = int$y - Dy*k$y*dir
+      
+      #atualiza intervalo
+      rv$intervalo = int
+      
+   })
+   
+   #faz calculos
+   observeEvent({input$x0; input$y0; input$xf; input$metodo; input$N; rv$dydx}, { 
       #define função
-      body(dydx) <- parse(text = input$dydx)
+      dydx = rv$dydx
       
       #faz calculos e tabela
       x0 = input$x0
@@ -32,39 +91,49 @@ shinyServer(function(input, output, session) {
       N = input$N
       h = (xf-x0)/N
       tabela <- NULL #define variavel tabela local
+      cab <- NULL
       if(input$metodo == 1)
-         source('euler.R', local = T, encoding = 'UTF-8')
+         source('metodos/euler.R', local = T, encoding = 'UTF-8')
       if(input$metodo == 2)
-         source('RK2.R', local = T, encoding = 'UTF-8')
+         source('metodos/RK2.R', local = T, encoding = 'UTF-8')
       if(input$metodo == 3)
-         source('RK3.R', local = T, encoding = 'UTF-8')
+         source('metodos/RK3.R', local = T, encoding = 'UTF-8')
       if(input$metodo == 4)
-         source('RK4.R', local = T, encoding = 'UTF-8')
+         source('metodos/RK4.R', local = T, encoding = 'UTF-8')
       rv$tabela <- tabela #atribui tabela local à reativa
+      rv$cabecario <- paste0("<tr><th>\\(",paste0(cab, collapse = '\\)</th><th>\\('),"\\)</tr></th>")
    })
    
    #imprime tabela
-   output$tabela <- renderTable({ 
-      M = tail(rv$tabela, 10)
-      M[,1] = as.integer(M[,1])
-      M
-   }, align='c', digits=3, striped = T)
+   observeEvent(rv$tabela, {
+      tabela = rv$tabela
+      modTab = list(pos=list(0), command=rv$cabecario)
+      if(nrow(tabela)>10){
+         modTab$pos[2] = nrow(tabela)
+         modTab$command[2] = paste0("<tr id='tabexp'><td align='center' colspan='", ncol(tabela),"'></td></tr>")
+      }
+      tabela[,1] = as.integer(tabela[,1])
+      output$tabela <- renderTable(tabela, align='c', digits=3, striped = T, 
+                                   include.colnames=FALSE, add.to.row = modTab)
+   })
    
    output$resultado <- renderUI({
       Result = rv$tabela[nrow(rv$tabela), 2:3]
-      withMathJax(sprintf("$$y(%.3f)=%.3f$$", Result[1], Result[2]))
+      sprintf("$$y(%.3f)=%.3f$$", Result[1], Result[2])
    })
 
    #plota gráfico
    output$plot <- renderPlot({ 
       #inicializa gráfico
-      intX = c(input$x1, input$x2)
-      intY = c(input$y1, input$y2)
+      intX = rv$intervalo$x
+      intY = rv$intervalo$y
       par(mar=c(1,1,0,0)*2.5); plot.new(); plot.window(intX, intY)
       axis(1); axis(2)
       
+      rv$plot = list(dev = dev.size('px'), par=par())
+      
       #plotar campo de direções
-      body(dydx) <- parse(text = input$dydx)
+      dydx = rv$dydx
       A = input$dens
       DX = (intX[2]-intX[1])/A
       DY = (intY[2]-intY[1])/A
