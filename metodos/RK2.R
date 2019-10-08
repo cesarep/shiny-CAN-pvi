@@ -8,3 +8,4 @@ for(i in 1:N){
    K2[i+1] = dydx(X[i+1] + h, Y[i+1] + h*K1[i+1])
 }
 tabela <- cbind(i = 0:N, X, Y, K1, K2)
+cab = c("i", 'x_i', 'y_i', 'K_1', 'K_2')
