@@ -1,4 +1,4 @@
-# shiny_CAN_pvi
+# shiny-CAN-pvi
 
 ```r
 library(shiny)
